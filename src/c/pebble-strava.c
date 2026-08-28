@@ -41,6 +41,8 @@ typedef enum {
 
 static AppState s_state = STATE_SELECT;
 static int      s_sport = SPORT_CYCLING;
+  
+static const bool s_left_hand_mode = true;
 
 // Elapsed time: offset accumulates completed active segments; seg_start is the
 // wall-clock time the current segment began. get_elapsed() combines both live.
@@ -80,12 +82,27 @@ static GFont      s_icon_font_14;
 static Window    *s_workout_win;
 static TextLayer *s_wk_time;
 static TextLayer *s_wk_dist;
+static TextLayer *s_wk_dist_unit;
 static TextLayer *s_wk_speed;
+static TextLayer *s_wk_speed_unit;
 static TextLayer *s_wk_bpm;
+static TextLayer *s_wk_bpm_unit;
 static TextLayer *s_wk_status;
 static TextLayer *s_wk_up_hint;
 static TextLayer *s_wk_sel_hint;
 static TextLayer *s_wk_back_hint;
+static Layer *s_canvas_layer;       //Layer for custom graphical elements
+
+// Which custom graphical elements to show 
+static bool      s_draw_speed_decimal_dot=true;
+static bool      s_draw_dist_decimal_dot=true;
+static bool      s_draw_bpm_dash = true;
+
+static const int s_unit_field_width = 70;
+static const int s_top_margin = 4;
+static const int s_lineheight = 52;
+static int       s_bounds_width = 0;
+
 
 // Persistent display buffers (TextLayer holds pointer, not a copy)
 static char s_sel_sport_buf[16];
@@ -109,20 +126,20 @@ static void fmt_time(char *buf, size_t n, uint32_t secs) {
 static void fmt_dist(char *buf, size_t n, uint32_t m) {
   if (!s_imperial) {
     if (m < 1000) {
-      snprintf(buf, n, "%lu m", (unsigned long)m);
+      snprintf(buf, n, "%lu", (unsigned long)m);
     } else {
       unsigned long km  = m / 1000;
       unsigned long dec = (m % 1000) / 10;
-      snprintf(buf, n, "%lu.%02lu km", km, dec);
+      snprintf(buf, n, "%lu.%01lu", km, dec);
     }
   } else {
     if (m < 1609) {
       unsigned long ft = (unsigned long)m * 5000 / 1524;  // m → feet
-      snprintf(buf, n, "%lu ft", ft);
+      snprintf(buf, n, "%lu", ft);
     } else {
       unsigned long mi  = m / 1609;
       unsigned long dec = (m % 1609) * 100 / 1609;
-      snprintf(buf, n, "%lu.%02lu mi", mi, dec);
+      snprintf(buf, n, "%lu.%01lu mi", mi, dec);
     }
   }
 }
@@ -130,25 +147,25 @@ static void fmt_dist(char *buf, size_t n, uint32_t m) {
 static void fmt_speed(char *buf, size_t n, uint32_t cms, int sport) {
   if (sport == SPORT_CYCLING) {
     if (!s_imperial) {
-      if (cms < 10) { snprintf(buf, n, "0.0 km/h"); return; }
+      if (cms < 10) { snprintf(buf, n, "0  0"); return; }
       unsigned long i = (cms * 36) / 1000;
       unsigned long d = ((cms * 36) % 1000) / 10;
-      snprintf(buf, n, "%lu.%02lu km/h", i, d);
+      snprintf(buf, n, "%lu %01lu", i,d);
     } else {
-      if (cms < 10) { snprintf(buf, n, "0.0 mph"); return; }
+      if (cms < 10) { snprintf(buf, n, "0  0"); return; }
       unsigned long i = (cms * 36) / 1609;
       unsigned long d = ((cms * 36) % 1609) * 100 / 1609;
-      snprintf(buf, n, "%lu.%02lu mph", i, d);
+      snprintf(buf, n, "%lu %01lu", i, d);
     }
   } else {
     if (!s_imperial) {
-      if (cms < 10) { snprintf(buf, n, "--:-- /km"); return; }
+      if (cms < 10) { snprintf(buf, n, "  :  "); return; }
       unsigned long spk = 100000 / cms;
-      snprintf(buf, n, "%lu:%02lu /km", spk / 60, spk % 60);
+      snprintf(buf, n, "%lu:%02lu", spk / 60, spk % 60);
     } else {
-      if (cms < 10) { snprintf(buf, n, "--:-- /mi"); return; }
+      if (cms < 10) { snprintf(buf, n, "  :  "); return; }
       unsigned long spm = 160934 / cms;
-      snprintf(buf, n, "%lu:%02lu /mi", spm / 60, spm % 60);
+      snprintf(buf, n, "%lu:%02lu", spm / 60, spm % 60);
     }
   }
 }
@@ -326,12 +343,19 @@ static void prv_read_hr(void) {
 // === Workout display ===
 
 static void update_workout_display(void) {
+  //static bool once = true;
   fmt_time(s_wk_time_buf,   sizeof(s_wk_time_buf),  get_elapsed());
   fmt_dist(s_wk_dist_buf,   sizeof(s_wk_dist_buf),  s_distance_m);
   fmt_speed(s_wk_speed_buf, sizeof(s_wk_speed_buf), s_speed_cms, s_sport);
 
-  if (s_hr_bpm > 0) snprintf(s_wk_bpm_buf, sizeof(s_wk_bpm_buf), "%d bpm", s_hr_bpm);
-  else              snprintf(s_wk_bpm_buf, sizeof(s_wk_bpm_buf), "-- bpm");
+  if (s_hr_bpm > 0){ 
+    snprintf(s_wk_bpm_buf, sizeof(s_wk_bpm_buf), "%d", s_hr_bpm);
+    s_draw_bpm_dash = false;
+  }
+  else{              
+    snprintf(s_wk_bpm_buf, sizeof(s_wk_bpm_buf), " ");
+    s_draw_bpm_dash = true;
+  }
 
   // Status row: HRM/GPS icons normally; state messages override when needed.
   // STATE_DONE: leave s_wk_status_buf as-is (set by inbox handler with result).
@@ -362,6 +386,46 @@ static void update_workout_display(void) {
   text_layer_set_text(s_wk_speed,    s_wk_speed_buf);
   text_layer_set_text(s_wk_bpm,      s_wk_bpm_buf);
   text_layer_set_text(s_wk_status,   s_wk_status_buf);
+  if (!s_imperial) {
+    if (s_distance_m<1000){
+      text_layer_set_text(s_wk_dist_unit,"m");
+      s_draw_dist_decimal_dot=false;
+    }
+    else{
+      text_layer_set_text(s_wk_dist_unit,"km");
+      s_draw_dist_decimal_dot=true;
+    }
+  }
+  else{
+      text_layer_set_text(s_wk_dist_unit,    (s_distance_m<1609)?"ft":"mi");
+      s_draw_dist_decimal_dot=false;
+  }
+
+  if (1){
+      //once = false;
+      if (s_sport == SPORT_CYCLING) {
+          if (!s_imperial) {
+              text_layer_set_text(s_wk_speed_unit,    "km/h");
+              s_draw_speed_decimal_dot=true;
+          }
+          else{
+              text_layer_set_text(s_wk_speed_unit,    "mph");
+              s_draw_speed_decimal_dot=true;
+          }
+      }
+      else{
+          if (!s_imperial) {
+              text_layer_set_text(s_wk_speed_unit,    "/km");
+              s_draw_speed_decimal_dot=false;
+          }
+          else{
+              text_layer_set_text(s_wk_speed_unit,    "/mi");
+              s_draw_speed_decimal_dot=false;
+          }
+      }
+      text_layer_set_text(s_wk_bpm_unit,      "bpm");
+  }
+  layer_mark_dirty(s_canvas_layer);
 }
 
 // === Workout tick (1 s via TickTimerService) — minimal redraws for power efficiency ===
@@ -379,8 +443,15 @@ static void prv_tick(struct tm *tick_time, TimeUnits units_changed) {
     prv_read_hr();
     prv_send_hr();
     if (s_hr_bpm != prev_hr) {
-      if (s_hr_bpm > 0) snprintf(s_wk_bpm_buf, sizeof(s_wk_bpm_buf), "%d bpm", s_hr_bpm);
-      else              snprintf(s_wk_bpm_buf, sizeof(s_wk_bpm_buf), "-- bpm");
+      if (s_hr_bpm > 0){ 
+        snprintf(s_wk_bpm_buf, sizeof(s_wk_bpm_buf), "%d", s_hr_bpm);
+        s_draw_bpm_dash = false;
+      }
+      else{              
+        snprintf(s_wk_bpm_buf, sizeof(s_wk_bpm_buf), " ");
+        s_draw_bpm_dash = true;
+      }
+      layer_mark_dirty(s_canvas_layer);
       text_layer_set_text(s_wk_bpm, s_wk_bpm_buf);
     }
   }
@@ -645,9 +716,18 @@ static void prv_select_load(Window *win) {
   text_layer_set_font(s_sel_gps, s_icon_font_14);
   text_layer_set_background_color(s_sel_gps, GColorClear);
   layer_add_child(root, text_layer_get_layer(s_sel_gps));
-
-  // Right-side button hints — unicode glyphs from custom font
-  s_sel_up_hint = text_layer_create(GRect(w - 20, 42, 20, 24));
+ 
+  // Button hints — unicode glyphs from custom font
+  if (!s_left_hand_mode) {
+    s_sel_up_hint = text_layer_create(GRect(w - 20, 42, 20, 24));
+    s_sel_sel_hint = text_layer_create(GRect(w - 20, 101, 20, 24));
+    s_sel_dn_hint = text_layer_create(GRect(w - 20, 161, 20, 24));
+  }
+  else{
+    s_sel_up_hint = text_layer_create(GRect(0, 42, 20, 24));
+    s_sel_sel_hint = text_layer_create(GRect(0, 101, 20, 24));
+    s_sel_dn_hint = text_layer_create(GRect(0, 161, 20, 24));
+  }
   text_layer_set_text(s_sel_up_hint, "\xe2\x96\xb2");   // ▲ U+25B2
   text_layer_set_text_alignment(s_sel_up_hint, GTextAlignmentCenter);
   text_layer_set_font(s_sel_up_hint, s_icon_font_14);
@@ -655,7 +735,6 @@ static void prv_select_load(Window *win) {
   text_layer_set_text_color(s_sel_up_hint, GColorLightGray);
   layer_add_child(root, text_layer_get_layer(s_sel_up_hint));
 
-  s_sel_sel_hint = text_layer_create(GRect(w - 20, 101, 20, 24));
   text_layer_set_text(s_sel_sel_hint, "\xe2\x96\xb6"); // ▶ U+25B6
   text_layer_set_text_alignment(s_sel_sel_hint, GTextAlignmentCenter);
   text_layer_set_font(s_sel_sel_hint, s_icon_font_14);
@@ -663,7 +742,6 @@ static void prv_select_load(Window *win) {
   text_layer_set_text_color(s_sel_sel_hint, GColorLightGray);
   layer_add_child(root, text_layer_get_layer(s_sel_sel_hint));
 
-  s_sel_dn_hint = text_layer_create(GRect(w - 20, 161, 20, 24));
   text_layer_set_text(s_sel_dn_hint, "\xe2\x96\xbc");  // ▼ U+25BC
   text_layer_set_text_alignment(s_sel_dn_hint, GTextAlignmentCenter);
   text_layer_set_font(s_sel_dn_hint, s_icon_font_14);
@@ -679,61 +757,131 @@ static void prv_select_unload(Window *win) {
   text_layer_destroy(s_sel_up_hint);
   text_layer_destroy(s_sel_sel_hint);
   text_layer_destroy(s_sel_dn_hint);
+  layer_destroy(s_canvas_layer);
 }
+  
 
 // === Workout window ===
+static void canvas_update_proc(Layer *layer, GContext *ctx) {
+  // Dist decimal dot
+  if (s_draw_dist_decimal_dot){
+      graphics_context_set_fill_color(ctx, GColorCyan);
+      graphics_fill_circle(ctx, GPoint(s_bounds_width-s_unit_field_width-30,s_top_margin+1*s_lineheight+45), 4);        
+  }
+  // Speed decimal dot
+  if (s_draw_speed_decimal_dot){
+      graphics_context_set_fill_color(ctx, GColorOrange);
+      graphics_fill_circle(ctx, GPoint(s_bounds_width-s_unit_field_width-30,s_top_margin+2*s_lineheight+45), 4);
+  }
+  if (s_draw_bpm_dash){
+      graphics_context_set_fill_color(ctx, GColorGreen);
+      int x = s_bounds_width-s_unit_field_width-35;
+      int w = 10;
+      int y = s_top_margin+3*s_lineheight+45-8;
+      int h = 4;
+      int cr = 2;
+      graphics_fill_rect(ctx, GRect(x,y,w,h),cr,GCornersAll);
+  }
+}
+
 
 static void prv_workout_load(Window *win) {
   Layer *root   = window_get_root_layer(win);
   GRect  bounds = layer_get_bounds(root);
-  int    w      = bounds.size.w;
+ 
+  // Create canvas layer for custom graphics
+  s_canvas_layer = layer_create(bounds);
+  // Assign the custom drawing procedure
+  layer_set_update_proc(s_canvas_layer, canvas_update_proc);
+  // Add to Window
+  layer_add_child(root, s_canvas_layer);
+  // Redraw this as soon as possible
+  layer_mark_dirty(s_canvas_layer);
+  
+  const int    w      = bounds.size.w;
+  s_bounds_width = w;
+
+  #define TIME_VALUE_FONT FONT_KEY_ROBOTO_BOLD_SUBSET_49
+  #define VALUE_FONT FONT_KEY_ROBOTO_BOLD_SUBSET_49
+  #define UNIT_FONT  FONT_KEY_GOTHIC_28_BOLD
+  const int font_hdiff = (49-28);
 
   // Layout (200×228): time(y=14) / dist(y=74) / speed(y=108) / bpm(y=142) / status(y=180)
   // Text layers span full w so they centre on the 200px screen.
   // The ▶ hint on the right edge is a separate layer drawn on top.
 
   // Elapsed time — large, dims to gray on pause
-  s_wk_time = text_layer_create(GRect(0, 14, w, 56));
+  s_wk_time = text_layer_create(GRect(0, s_top_margin, w , 56));
   text_layer_set_text_alignment(s_wk_time, GTextAlignmentCenter);
-  text_layer_set_font(s_wk_time, fonts_get_system_font(FONT_KEY_BITHAM_42_BOLD));
+  text_layer_set_font(s_wk_time, fonts_get_system_font(TIME_VALUE_FONT));
   text_layer_set_background_color(s_wk_time, GColorClear);
   text_layer_set_text_color(s_wk_time, GColorWhite);
   layer_add_child(root, text_layer_get_layer(s_wk_time));
 
   // Distance
-  s_wk_dist = text_layer_create(GRect(0, 74, w, 32));
-  text_layer_set_text_alignment(s_wk_dist, GTextAlignmentCenter);
-  text_layer_set_font(s_wk_dist, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
+  s_wk_dist = text_layer_create(GRect(0, s_top_margin + s_lineheight, w-s_unit_field_width, 56));
+  text_layer_set_text_alignment(s_wk_dist, GTextAlignmentRight);
+  text_layer_set_font(s_wk_dist, fonts_get_system_font(VALUE_FONT));
   text_layer_set_background_color(s_wk_dist, GColorClear);
-  text_layer_set_text_color(s_wk_dist, GColorWhite);
+  text_layer_set_text_color(s_wk_dist, GColorCyan);
   layer_add_child(root, text_layer_get_layer(s_wk_dist));
+  // Distance unit
+  s_wk_dist_unit = text_layer_create(GRect(w-s_unit_field_width, s_top_margin + s_lineheight +font_hdiff, s_unit_field_width, 32));
+  text_layer_set_text_alignment(s_wk_dist_unit, GTextAlignmentLeft);
+  text_layer_set_font(s_wk_dist_unit, fonts_get_system_font(UNIT_FONT));
+  text_layer_set_background_color(s_wk_dist_unit, GColorClear);
+  text_layer_set_text_color(s_wk_dist_unit, GColorCyan);
+  layer_add_child(root, text_layer_get_layer(s_wk_dist_unit));
 
   // Speed / pace
-  s_wk_speed = text_layer_create(GRect(0, 108, w, 32));
-  text_layer_set_text_alignment(s_wk_speed, GTextAlignmentCenter);
-  text_layer_set_font(s_wk_speed, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
+  s_wk_speed = text_layer_create(GRect(0, s_top_margin + 2* s_lineheight, w-s_unit_field_width, 56));
+  text_layer_set_text_alignment(s_wk_speed, GTextAlignmentRight);
+  text_layer_set_font(s_wk_speed, fonts_get_system_font(VALUE_FONT));
   text_layer_set_background_color(s_wk_speed, GColorClear);
   text_layer_set_text_color(s_wk_speed, GColorOrange);
   layer_add_child(root, text_layer_get_layer(s_wk_speed));
+  // Speed unit
+  s_wk_speed_unit = text_layer_create(GRect(w-s_unit_field_width, s_top_margin + 2* s_lineheight +font_hdiff, s_unit_field_width, 32));
+  text_layer_set_text_alignment(s_wk_speed_unit, GTextAlignmentLeft);
+  text_layer_set_font(s_wk_speed_unit, fonts_get_system_font(UNIT_FONT));
+  text_layer_set_background_color(s_wk_speed_unit, GColorClear);
+  text_layer_set_text_color(s_wk_speed_unit, GColorOrange);
+  layer_add_child(root, text_layer_get_layer(s_wk_speed_unit));
 
   // Heart rate
-  s_wk_bpm = text_layer_create(GRect(0, 142, w, 32));
-  text_layer_set_text_alignment(s_wk_bpm, GTextAlignmentCenter);
-  text_layer_set_font(s_wk_bpm, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
+  s_wk_bpm = text_layer_create(GRect(0, s_top_margin + 3* s_lineheight, w-s_unit_field_width, 56));
+  text_layer_set_text_alignment(s_wk_bpm, GTextAlignmentRight);
+  text_layer_set_font(s_wk_bpm, fonts_get_system_font(VALUE_FONT));
   text_layer_set_background_color(s_wk_bpm, GColorClear);
-  text_layer_set_text_color(s_wk_bpm, GColorWhite);
+  text_layer_set_text_color(s_wk_bpm, GColorGreen);
   layer_add_child(root, text_layer_get_layer(s_wk_bpm));
+  // Heart rate unit
+  s_wk_bpm_unit = text_layer_create(GRect(w-s_unit_field_width, s_top_margin + 3* s_lineheight +font_hdiff, s_unit_field_width, 32));
+  text_layer_set_text_alignment(s_wk_bpm_unit, GTextAlignmentLeft);
+  text_layer_set_font(s_wk_bpm_unit, fonts_get_system_font(UNIT_FONT));
+  text_layer_set_background_color(s_wk_bpm_unit, GColorClear);
+  text_layer_set_text_color(s_wk_bpm_unit, GColorGreen);
+  layer_add_child(root, text_layer_get_layer(s_wk_bpm_unit));
 
   // HRM ✓  GPS ✓ — small dimmed status row (same style as select screen)
-  s_wk_status = text_layer_create(GRect(0, 180, w, 16));
+  s_wk_status = text_layer_create(GRect(0, s_top_margin + 4* s_lineheight , w, 16));
   text_layer_set_text_alignment(s_wk_status, GTextAlignmentCenter);
   text_layer_set_font(s_wk_status, s_icon_font_14);
   text_layer_set_background_color(s_wk_status, GColorClear);
   text_layer_set_text_color(s_wk_status, GColorLightGray);
   layer_add_child(root, text_layer_get_layer(s_wk_status));
 
+  if (!s_left_hand_mode) {
+      s_wk_up_hint = text_layer_create(GRect(w - 20, 42, 20, 24));
+      s_wk_sel_hint = text_layer_create(GRect(w - 20, 101, 20, 24));
+      s_wk_back_hint = text_layer_create(GRect(0, 42, 20, 24));
+  }
+  else{
+      s_wk_up_hint = text_layer_create(GRect(0, 42, 20, 24));
+      s_wk_sel_hint = text_layer_create(GRect(0, 101, 20, 24));
+      s_wk_back_hint = text_layer_create(GRect(w-20, 161, 20, 24));
+  }
   // UP hint (■ stop) — top-right, aligned with UP button (~y=42), double-press to stop+upload
-  s_wk_up_hint = text_layer_create(GRect(w - 20, 42, 20, 24));
   text_layer_set_text(s_wk_up_hint, "\xe2\x96\xa0");  // ■ U+25A0
   text_layer_set_text_alignment(s_wk_up_hint, GTextAlignmentCenter);
   text_layer_set_font(s_wk_up_hint, s_icon_font_14);
@@ -742,7 +890,6 @@ static void prv_workout_load(Window *win) {
   layer_add_child(root, text_layer_get_layer(s_wk_up_hint));
 
   // SELECT hint (▶/||) — right edge, aligned with SELECT button (~y=101)
-  s_wk_sel_hint = text_layer_create(GRect(w - 20, 101, 20, 24));
   text_layer_set_text(s_wk_sel_hint, "\xe2\x96\xb6");  // ▶ U+25B6
   text_layer_set_text_alignment(s_wk_sel_hint, GTextAlignmentCenter);
   text_layer_set_font(s_wk_sel_hint, s_icon_font_14);
@@ -751,7 +898,6 @@ static void prv_workout_load(Window *win) {
   layer_add_child(root, text_layer_get_layer(s_wk_sel_hint));
 
   // BACK hint (◀ cancel) — left edge, aligned with BACK button (~y=42), double-press to cancel
-  s_wk_back_hint = text_layer_create(GRect(0, 42, 20, 24));
   text_layer_set_text(s_wk_back_hint, "\xe2\x97\x80");  // ◀ U+25C0
   text_layer_set_text_alignment(s_wk_back_hint, GTextAlignmentCenter);
   text_layer_set_font(s_wk_back_hint, s_icon_font_14);
@@ -765,8 +911,11 @@ static void prv_workout_load(Window *win) {
 static void prv_workout_unload(Window *win) {
   text_layer_destroy(s_wk_time);
   text_layer_destroy(s_wk_dist);
+  text_layer_destroy(s_wk_dist_unit);
   text_layer_destroy(s_wk_speed);
+  text_layer_destroy(s_wk_speed_unit);
   text_layer_destroy(s_wk_bpm);
+  text_layer_destroy(s_wk_bpm_unit);
   text_layer_destroy(s_wk_status);
   text_layer_destroy(s_wk_up_hint);
   text_layer_destroy(s_wk_sel_hint);
