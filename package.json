@@ -48,7 +48,8 @@
       "SETTINGS_HR_INTERVAL_WALKING",
       "SETTINGS_GPS_ACCURACY",
       "SETTINGS_UNITS",
-      "SETTINGS_DOWNLOAD_SUBFOLDER"
+      "SETTINGS_DOWNLOAD_SUBFOLDER",
+      "SETTINGS_ROTATION"
     ],
     "resources": {
       "media": [
