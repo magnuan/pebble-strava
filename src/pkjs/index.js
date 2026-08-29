@@ -11,7 +11,9 @@ var HR_RUNNING    = parseInt(_cfg.HR_RUNNING   || '5',  10);
 var HR_WALKING    = parseInt(_cfg.HR_WALKING   || '15', 10);
 var GPS_ACCURACY        = parseInt(_cfg.GPS_ACCURACY        || '25', 10);
 var UNITS               = parseInt(_cfg.UNITS               || '0',  10);
+var ROTATION               = parseInt(_cfg.ROTATION               || '0',  10);
 var DOWNLOAD_SUBFOLDER  = _cfg.DOWNLOAD_SUBFOLDER || '';
+var JS_READY             = false;
 
 function storageGet(key) {
   try { return Pebble.getLocalStorageItem(key) || ''; } catch(e) { return ''; }
@@ -34,6 +36,7 @@ function sendSettings() {
     'SETTINGS_HR_INTERVAL_WALKING': HR_WALKING,
     'SETTINGS_GPS_ACCURACY':        GPS_ACCURACY,
     'SETTINGS_UNITS':               UNITS,
+    'SETTINGS_ROTATION':            ROTATION,
   });
 }
 
@@ -69,14 +72,19 @@ Pebble.addEventListener('ready', function() {
   if (stored === 15 || stored === 25 || stored === 50) GPS_ACCURACY = stored;
   stored = parseInt(storageGet('units') || '-1', 10);
   if (stored === 0 || stored === 1) UNITS = stored;
+  stored = parseInt(storageGet('rotation') || '-1', 10);
+  if (stored === 0 || stored === 1) ROTATION = stored;
   var storedSub = storageGet('downloadSubfolder');
   if (storedSub !== undefined) DOWNLOAD_SUBFOLDER = storedSub;
 
-  sendSettings();
+  // Do not let an early appmessage callback send module defaults before
+  // localStorage has been loaded. That message can otherwise overwrite
+  // settings restored from the watch on startup.
+  JS_READY = true;
+  sendToWatch({ 'CRED_REQUEST': 1 });
   if (WORKER_URL && WORKER_SECRET) {
     pingWorker();
   } else {
-    sendToWatch({ 'CRED_REQUEST': 1 });
     sendToWatch({ 'WORKER_STATUS': 3 }); // WORKER_NONE — no worker, hides W status
   }
 });
@@ -149,6 +157,11 @@ var CONFIG_HTML = '<!DOCTYPE html>' +
 '<option value="0">Metric — km, km/h, min/km</option>' +
 '<option value="1">Imperial — mi, mph, min/mi</option>' +
 '</select>' +
+'<label>Rotation</label>' +
+'<select id="rotation">' +
+'<option value="0">Right hand</option>' +
+'<option value="1">Left hand</option>' +
+'</select>' +
 '</div>' +
 '<div class="section">' +
 '<p class="st">Storage</p>' +
@@ -164,6 +177,7 @@ var CONFIG_HTML = '<!DOCTYPE html>' +
 'document.getElementById("hr-w").value=w;document.getElementById("hr-w-v").textContent=w+" s";})();' +
 'document.getElementById("gps").value="__GPS_ACCURACY__";' +
 'document.getElementById("units").value="__UNITS__";' +
+'document.getElementById("rotation").value="__ROTATION__";' +
 'function save(){' +
 '  var d={' +
 '    workerUrl:document.getElementById("u").value.trim(),' +
@@ -174,6 +188,7 @@ var CONFIG_HTML = '<!DOCTYPE html>' +
 '    hrWalking:document.getElementById("hr-w").value,' +
 '    gpsAccuracy:document.getElementById("gps").value,' +
 '    units:document.getElementById("units").value,' +
+'    rotation:document.getElementById("rotation").value,' +
 '    downloadSubfolder:document.getElementById("subfolder").value.trim()' +
 '  };' +
 '  location.href="pebblejs://close#"+encodeURIComponent(JSON.stringify(d));' +
@@ -194,6 +209,7 @@ Pebble.addEventListener('showConfiguration', function() {
     .replace('__HR_WALKING__',   String(HR_WALKING))
     .replace('__GPS_ACCURACY__', String(GPS_ACCURACY))
     .replace('__UNITS__',        String(UNITS))
+    .replace('__ROTATION__',        String(ROTATION))
     .replace('__SUBFOLDER__',    htmlEscape(DOWNLOAD_SUBFOLDER));
   Pebble.openURL('data:text/html,' + encodeURIComponent(html));
 });
@@ -222,6 +238,8 @@ Pebble.addEventListener('webviewclosed', function(e) {
     if (iv === 15 || iv === 25 || iv === 50) { GPS_ACCURACY = iv; storageSet('gpsAccuracy', String(iv)); }
     iv = parseInt(data.units || '-1', 10);
     if (iv === 0 || iv === 1) { UNITS = iv; storageSet('units', String(iv)); }
+    iv = parseInt(data.rotation || '-1', 10);
+    if (iv === 0 || iv === 1) { ROTATION = iv; storageSet('rotation', String(iv)); }
     if (data.downloadSubfolder !== undefined) {
       DOWNLOAD_SUBFOLDER = data.downloadSubfolder;
       storageSet('downloadSubfolder', data.downloadSubfolder);
@@ -257,6 +275,7 @@ Pebble.addEventListener('webviewclosed', function(e) {
 
 Pebble.addEventListener('appmessage', function(e) {
   var msg = e.payload;
+  applyWatchSettings(msg);
 
   if (msg.CRED_URL) {
     WORKER_URL = msg.CRED_URL;
@@ -270,8 +289,45 @@ Pebble.addEventListener('appmessage', function(e) {
     USER_EMAIL = msg.CRED_EMAIL;
     storageSet('userEmail', msg.CRED_EMAIL);
   }
-  if ((msg.CRED_URL || msg.CRED_SECRET || msg.CRED_EMAIL) && WORKER_URL && WORKER_SECRET) {
+  if (JS_READY && (msg.CRED_URL || msg.CRED_SECRET || msg.CRED_EMAIL) && WORKER_URL && WORKER_SECRET) {
     pingWorker();
-    sendSettings();
   }
 });
+function applyWatchSettings(msg) {
+  var iv;
+  iv = parseInt(msg.SETTINGS_HR_INTERVAL_CYCLING, 10);
+  if (iv >= 1 && iv <= 30) {
+    HR_CYCLING = iv;
+    storageSet('hrCycling', String(iv));
+  }
+  iv = parseInt(msg.SETTINGS_HR_INTERVAL_RUNNING, 10);
+  if (iv >= 1 && iv <= 30) {
+    HR_RUNNING = iv;
+    storageSet('hrRunning', String(iv));
+  }
+  iv = parseInt(msg.SETTINGS_HR_INTERVAL_WALKING, 10);
+  if (iv >= 1 && iv <= 30) {
+    HR_WALKING = iv;
+    storageSet('hrWalking', String(iv));
+  }
+  iv = parseInt(msg.SETTINGS_GPS_ACCURACY, 10);
+  if (iv === 15 || iv === 25 || iv === 50) {
+    GPS_ACCURACY = iv;
+    storageSet('gpsAccuracy', String(iv));
+  }
+  iv = parseInt(msg.SETTINGS_UNITS, 10);
+  if (iv === 0 || iv === 1) {
+    UNITS = iv;
+    storageSet('units', String(iv));
+  }
+  iv = parseInt(msg.SETTINGS_ROTATION, 10);
+  if (iv === 0 || iv === 1) {
+    ROTATION = iv;
+    storageSet('rotation', String(iv));
+  }
+  if (msg.SETTINGS_DOWNLOAD_SUBFOLDER !== undefined) {
+    DOWNLOAD_SUBFOLDER = msg.SETTINGS_DOWNLOAD_SUBFOLDER;
+    storageSet('downloadSubfolder', DOWNLOAD_SUBFOLDER);
+  }
+}
+
