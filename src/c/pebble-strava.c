@@ -14,7 +14,8 @@
 #define PERSIST_KEY_HR_WALKING   5
 #define PERSIST_KEY_GPS_ACCURACY  6
 #define PERSIST_KEY_UNITS         7
-#define PERSIST_KEY_SUBFOLDER     8
+#define PERSIST_KEY_ROTATION      8
+#define PERSIST_KEY_SUBFOLDER     9
 
 #define SPORT_CYCLING 0
 #define SPORT_RUNNING 1
@@ -42,7 +43,6 @@ typedef enum {
 static AppState s_state = STATE_SELECT;
 static int      s_sport = SPORT_CYCLING;
   
-static const bool s_left_hand_mode = true;
 
 // Elapsed time: offset accumulates completed active segments; seg_start is the
 // wall-clock time the current segment began. get_elapsed() combines both live.
@@ -67,6 +67,7 @@ static int     s_hr_tick_count    = 0;
 static int16_t s_last_sent_hr     = -1;
 static int     s_gps_accuracy     = 25;  // meters — relayed to Android on CMD_START
 static bool    s_imperial         = false;
+static bool    s_left_hand_mode = false;
 
 // === Windows & layers ===
 
@@ -255,6 +256,11 @@ static void prv_inbox_received(DictionaryIterator *iter, void *ctx) {
     s_imperial = (t->value->int8 == 1);
     persist_write_int(PERSIST_KEY_UNITS, s_imperial ? 1 : 0);
   }
+  t = dict_find(iter, MESSAGE_KEY_SETTINGS_ROTATION);
+  if (t) {
+    s_left_hand_mode = (t->value->int8 == 1);
+    persist_write_int(PERSIST_KEY_ROTATION, s_left_hand_mode ? 1 : 0);
+  }
   t = dict_find(iter, MESSAGE_KEY_SETTINGS_DOWNLOAD_SUBFOLDER);
   if (t) persist_write_string(PERSIST_KEY_SUBFOLDER, t->value->cstring);
 
@@ -294,16 +300,29 @@ static void prv_send_creds(void) {
   char url[128]       = {0};
   char secret[64]     = {0};
   char subfolder[64]  = {0};
-  if (!persist_read_string(PERSIST_KEY_URL,    url,    sizeof(url))    ||
-      !persist_read_string(PERSIST_KEY_SECRET, secret, sizeof(secret)) ||
-      url[0] == '\0') return;
+  bool have_creds =
+    persist_read_string(PERSIST_KEY_URL,    url,    sizeof(url)) &&
+    persist_read_string(PERSIST_KEY_SECRET, secret, sizeof(secret)) &&
+    url[0] != '\0';
   persist_read_string(PERSIST_KEY_SUBFOLDER, subfolder, sizeof(subfolder));
   DictionaryIterator *iter;
   if (app_message_outbox_begin(&iter) != APP_MSG_OK) return;
-  dict_write_cstring(iter, MESSAGE_KEY_CRED_URL,    url);
-  dict_write_cstring(iter, MESSAGE_KEY_CRED_SECRET, secret);
-  if (subfolder[0] != '\0')
-    dict_write_cstring(iter, MESSAGE_KEY_SETTINGS_DOWNLOAD_SUBFOLDER, subfolder);
+  // Return persisted settings as well as credentials so PKJS can recover
+  // from a lost or stale phone-side localStorage cache.
+  dict_write_int8(iter, MESSAGE_KEY_SETTINGS_HR_INTERVAL_CYCLING,
+                  (int8_t)s_hr_interval_s[SPORT_CYCLING]);
+  dict_write_int8(iter, MESSAGE_KEY_SETTINGS_HR_INTERVAL_RUNNING,
+                  (int8_t)s_hr_interval_s[SPORT_RUNNING]);
+  dict_write_int8(iter, MESSAGE_KEY_SETTINGS_HR_INTERVAL_WALKING,
+                  (int8_t)s_hr_interval_s[SPORT_WALKING]);
+  dict_write_int8(iter, MESSAGE_KEY_SETTINGS_GPS_ACCURACY, (int8_t)s_gps_accuracy);
+  dict_write_int8(iter, MESSAGE_KEY_SETTINGS_UNITS, s_imperial ? 1 : 0);
+  dict_write_int8(iter, MESSAGE_KEY_SETTINGS_ROTATION, s_left_hand_mode ? 1 : 0);
+  dict_write_cstring(iter, MESSAGE_KEY_SETTINGS_DOWNLOAD_SUBFOLDER, subfolder);
+  if (have_creds) {
+    dict_write_cstring(iter, MESSAGE_KEY_CRED_URL, url);
+    dict_write_cstring(iter, MESSAGE_KEY_CRED_SECRET, secret);
+  }
   app_message_outbox_send();
 }
 
@@ -315,6 +334,7 @@ static void prv_send_cmd(int action) {
     dict_write_int8(iter, MESSAGE_KEY_CMD_SPORT,            (int8_t)s_sport);
     dict_write_int8(iter, MESSAGE_KEY_SETTINGS_GPS_ACCURACY,(int8_t)s_gps_accuracy);
     dict_write_int8(iter, MESSAGE_KEY_SETTINGS_UNITS,       s_imperial ? 1 : 0);
+    dict_write_int8(iter, MESSAGE_KEY_SETTINGS_ROTATION,    s_left_hand_mode ? 1 : 0);
   }
   app_message_outbox_send();
 }
@@ -937,6 +957,9 @@ static void prv_init(void) {
   if (iv == 15 || iv == 25 || iv == 50) s_gps_accuracy = iv;
   iv = persist_read_int(PERSIST_KEY_UNITS);
   if (iv == 1) s_imperial = true;
+  iv = persist_read_int(PERSIST_KEY_ROTATION);
+  if (iv == 1) s_left_hand_mode = true;
+  APP_LOG(APP_LOG_LEVEL_INFO, "prv_init PERSIST_KEY_ROTATION read %d", iv);  
 
   s_select_win = window_create();
   window_set_background_color(s_select_win, GColorBlack);
