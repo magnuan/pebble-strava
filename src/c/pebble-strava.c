@@ -90,13 +90,14 @@ static TextLayer *s_wk_bpm;
 static TextLayer *s_wk_bpm_unit;
 static TextLayer *s_wk_status;
 static TextLayer *s_wk_up_hint;
+static TextLayer *s_wk_dn_hint;
 static TextLayer *s_wk_sel_hint;
 static TextLayer *s_wk_back_hint;
 static Layer *s_canvas_layer;       //Layer for custom graphical elements
 
 // Which custom graphical elements to show 
 static bool      s_draw_speed_decimal_dot=true;
-static bool      s_draw_dist_decimal_dot=true;
+static int       s_dist_decimal_dot = 0;
 static bool      s_draw_bpm_dash = true;
 
 static const int s_unit_field_width = 70;
@@ -128,19 +129,35 @@ static void fmt_dist(char *buf, size_t n, uint32_t m) {
   if (!s_imperial) {
     if (m < 1000) {
       snprintf(buf, n, "%lu", (unsigned long)m);
-    } else {
+      s_dist_decimal_dot=0;
+    } 
+    else if (m<100000){
       unsigned long km  = m / 1000;
       unsigned long dec = (m % 1000) / 10;
-      snprintf(buf, n, "%lu.%01lu", km, dec);
+      snprintf(buf, n, "%lu  %02lu", km, dec);
+      s_dist_decimal_dot=2;
+    }
+    else {
+      unsigned long km  = m / 1000;
+      unsigned long dec = (m % 1000) / 100;
+      snprintf(buf, n, "%lu  %1lu", km, dec);
+      s_dist_decimal_dot=1;
     }
   } else {
     if (m < 1609) {
       unsigned long ft = (unsigned long)m * 5000 / 1524;  // m → feet
       snprintf(buf, n, "%lu", ft);
-    } else {
+      s_dist_decimal_dot=0;
+    } else if (m<160900){
       unsigned long mi  = m / 1609;
       unsigned long dec = (m % 1609) * 100 / 1609;
-      snprintf(buf, n, "%lu.%01lu mi", mi, dec);
+      snprintf(buf, n, "%lu  %02lu", mi, dec);
+      s_dist_decimal_dot=2;
+    } else {
+      unsigned long mi  = m / 1609;
+      unsigned long dec = (m % 1609) * 10 / 1609;
+      snprintf(buf, n, "%lu  %1lu", mi, dec);
+      s_dist_decimal_dot=1;
     }
   }
 }
@@ -363,7 +380,7 @@ static void prv_read_hr(void) {
 // === Workout display ===
 
 static void update_workout_display(void) {
-  //static bool once = true;
+  s_distance_m = 1636;
   fmt_time(s_wk_time_buf,   sizeof(s_wk_time_buf),  get_elapsed());
   fmt_dist(s_wk_dist_buf,   sizeof(s_wk_dist_buf),  s_distance_m);
   fmt_speed(s_wk_speed_buf, sizeof(s_wk_speed_buf), s_speed_cms, s_sport);
@@ -406,23 +423,17 @@ static void update_workout_display(void) {
   text_layer_set_text(s_wk_speed,    s_wk_speed_buf);
   text_layer_set_text(s_wk_bpm,      s_wk_bpm_buf);
   text_layer_set_text(s_wk_status,   s_wk_status_buf);
+
   if (!s_imperial) {
-    if (s_distance_m<1000){
-      text_layer_set_text(s_wk_dist_unit,"m");
-      s_draw_dist_decimal_dot=false;
-    }
-    else{
-      text_layer_set_text(s_wk_dist_unit,"km");
-      s_draw_dist_decimal_dot=true;
-    }
+      text_layer_set_text(s_wk_dist_unit,    (s_distance_m<1000)?"m":"km");
   }
   else{
       text_layer_set_text(s_wk_dist_unit,    (s_distance_m<1609)?"ft":"mi");
-      s_draw_dist_decimal_dot=false;
   }
 
+
   if (1){
-      //once = false;
+      //TODO, this might non need to be updated every time to save battery
       if (s_sport == SPORT_CYCLING) {
           if (!s_imperial) {
               text_layer_set_text(s_wk_speed_unit,    "km/h");
@@ -641,10 +652,15 @@ static void prv_wk_back(ClickRecognizerRef r, void *ctx) {
   }
 }
 
+static void prv_wk_down(ClickRecognizerRef r, void *ctx) {
+    //TODO toggle viw mode here
+}
+
 static void prv_wk_click_config(void *ctx) {
   window_single_click_subscribe(BUTTON_ID_SELECT, prv_wk_select);
   window_single_click_subscribe(BUTTON_ID_UP,     prv_wk_up);
   window_single_click_subscribe(BUTTON_ID_BACK,   prv_wk_back);
+  window_single_click_subscribe(BUTTON_ID_DOWN,   prv_wk_down);
 }
 
 // === Click handlers — Sport select window ===
@@ -784,9 +800,9 @@ static void prv_select_unload(Window *win) {
 // === Workout window ===
 static void canvas_update_proc(Layer *layer, GContext *ctx) {
   // Dist decimal dot
-  if (s_draw_dist_decimal_dot){
+  if (s_dist_decimal_dot){
       graphics_context_set_fill_color(ctx, GColorCyan);
-      graphics_fill_circle(ctx, GPoint(s_bounds_width-s_unit_field_width-30,s_top_margin+1*s_lineheight+45), 4);        
+      graphics_fill_circle(ctx, GPoint(s_bounds_width-s_unit_field_width-(30*s_dist_decimal_dot),s_top_margin+1*s_lineheight+45), 4);        
   }
   // Speed decimal dot
   if (s_draw_speed_decimal_dot){
@@ -895,11 +911,13 @@ static void prv_workout_load(Window *win) {
       s_wk_up_hint = text_layer_create(GRect(w - 20, 42, 20, 24));
       s_wk_sel_hint = text_layer_create(GRect(w - 20, 101, 20, 24));
       s_wk_back_hint = text_layer_create(GRect(0, 42, 20, 24));
+      s_wk_dn_hint = text_layer_create(GRect(w - 20, 161, 20, 24));
   }
   else{
       s_wk_up_hint = text_layer_create(GRect(0, 42, 20, 24));
       s_wk_sel_hint = text_layer_create(GRect(0, 101, 20, 24));
       s_wk_back_hint = text_layer_create(GRect(w-20, 161, 20, 24));
+      s_wk_dn_hint = text_layer_create(GRect(0, 161, 20, 24));
   }
   // UP hint (■ stop) — top-right, aligned with UP button (~y=42), double-press to stop+upload
   text_layer_set_text(s_wk_up_hint, "\xe2\x96\xa0");  // ■ U+25A0
@@ -924,6 +942,14 @@ static void prv_workout_load(Window *win) {
   text_layer_set_background_color(s_wk_back_hint, GColorClear);
   text_layer_set_text_color(s_wk_back_hint, GColorDarkGray);
   layer_add_child(root, text_layer_get_layer(s_wk_back_hint));
+  
+  // DOWN hint (🔃 cycle view) — press to cycle view mode
+  text_layer_set_text(s_wk_dn_hint, "\xf0\x9f\x94\x83");  // 🔃 U+1F503
+  text_layer_set_text_alignment(s_wk_dn_hint, GTextAlignmentCenter);
+  text_layer_set_font(s_wk_dn_hint, s_icon_font_14);
+  text_layer_set_background_color(s_wk_dn_hint, GColorClear);
+  text_layer_set_text_color(s_wk_dn_hint, GColorDarkGray);
+  layer_add_child(root, text_layer_get_layer(s_wk_dn_hint));
 
   update_workout_display();
 }
