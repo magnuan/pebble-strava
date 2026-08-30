@@ -30,6 +30,14 @@
 #define WORKER_ERROR   2
 #define WORKER_NONE    3  // no worker configured
 
+
+/*
+In four value mode km/h gets rendered wrong.
+Speed dot from four value mode, sometimes sticks
+HR monitor freezes
+
+*/
+
 // === App state ===
 
 typedef enum {
@@ -39,6 +47,14 @@ typedef enum {
   STATE_UPLOADING,
   STATE_DONE,
 } AppState;
+
+typedef enum {
+  UNIT_METRIC=0,
+  UNIT_IMPERIAL,
+  UNIT_NAUTICAL,
+  UNIT_SCIENTIFIC,
+  UNIT_FFF,
+} UnitSystem;
 
 typedef enum {
   VIEW_ALL = 0,
@@ -54,7 +70,7 @@ typedef enum {
 #define CLOCK_COLOR     (GColorYellow)
 #define DIST_COLOR      (GColorCyan)
 #define SPEED_COLOR     (GColorChromeYellow)
-#define HR_COLOR        (GColorGreen)
+#define HEART_COLOR        (GColorGreen)
 
 /*** Custom big number from png section ***/
 #define DIGIT_WIDTH  60
@@ -86,6 +102,7 @@ typedef enum {
     FMT_TIME,
     FMT_DIST,
     FMT_SPEED,
+    FMT_INV_SPEED,
     FMT_HEART,
 } NumberFormat;
 
@@ -144,7 +161,19 @@ static void swap_bitmap_color(GBitmap *bitmap, GColor from_color, GColor to_colo
 
 
 
-static void draw_big_number(uint32_t val, NumberFormat format){
+static void draw_big_number(int val1, int val2, NumberFormat format, const char* unit){
+    GColor color = TIME_COLOR;
+    static const char* last_unit;
+    switch(format){
+        case FMT_CLEAR:break;
+        case FMT_CLOCK:color = CLOCK_COLOR; break;
+        case FMT_TIME:color = TIME_COLOR; break;
+        case FMT_DIST:color = DIST_COLOR; break;
+        case FMT_SPEED:color = SPEED_COLOR; break;
+        case FMT_INV_SPEED:color = SPEED_COLOR; break;
+        case FMT_HEART:color = HEART_COLOR; break;
+    }
+
     // Display is 
     //    200 pix wide, we need up to 3 digits per row, so each digit should be 60 pixels wide
     //    228 pix high, up to two rows, 100 pixels 
@@ -155,50 +184,52 @@ static void draw_big_number(uint32_t val, NumberFormat format){
         case FMT_CLEAR:
             text_layer_set_text(s_wk_big_number_unit, "");
             break;
-        case FMT_CLOCK:  //Top MMM Bottom SS
-            s_big_numbers[0] = val/60;
+        case FMT_CLOCK:  //Top HH Bottom :MM
+            s_big_numbers[0] = val1;
             s_big_number_styles[0] = STY_2LEAD0;
-            s_big_number_colors[0] = CLOCK_COLOR;
-            s_big_numbers[2] = val%60;
+            s_big_number_colors[0] = color;
+            s_big_numbers[2] = val2;
             s_big_number_styles[2] = STY_COLON;
-            s_big_number_colors[2] = CLOCK_COLOR;
-            text_layer_set_text(s_wk_big_number_unit, "time");
-            text_layer_set_text_color(s_wk_big_number_unit, CLOCK_COLOR);
+            s_big_number_colors[2] = color;
             break;
-        case FMT_TIME:  //Top MMM Bottom SS
-            s_big_numbers[0] = val/60;
-            s_big_number_styles[0] = STY_PLAIN;
-            s_big_number_colors[0] = TIME_COLOR;
-            s_big_numbers[2] = val%60;
-            s_big_number_styles[2] = STY_COLON;
-            s_big_number_colors[2] = TIME_COLOR;
-            text_layer_set_text(s_wk_big_number_unit, "elapsed");
-            text_layer_set_text_color(s_wk_big_number_unit, TIME_COLOR);
+        case FMT_DIST:  //Single line for integers, two lines with decimal dot for fracional numbers (val2 is millis)
+        case FMT_SPEED: 
+        case FMT_HEART: 
+            if (val2>=0){
+                s_big_numbers[0] = val1;
+                s_big_number_styles[0] = STY_PLAIN;
+                s_big_number_colors[0] = color;
+                s_big_numbers[2] = val2/10;
+                s_big_number_styles[2] = STY_DOT;
+                s_big_number_colors[2] = color;
+            }else{
+                s_big_numbers[1] = val1;
+                s_big_number_styles[1] = STY_PLAIN;
+                s_big_number_colors[1] = color;
+            }
             break;
-        case FMT_DIST:  //Top kkk Bottom mmm
-            s_big_numbers[0] = val/1000;
-            s_big_number_styles[0] = STY_PLAIN;
-            s_big_number_colors[0] = DIST_COLOR;
-            s_big_numbers[2] = (val/10)%100;
-            s_big_number_styles[2] = STY_DOT;
-            s_big_number_colors[2] = DIST_COLOR;
-            text_layer_set_text(s_wk_big_number_unit, "km");
-            text_layer_set_text_color(s_wk_big_number_unit, DIST_COLOR);
+        case FMT_TIME:      //Single line for integers, two lines with decimal dot for fracional numbers (val2 is mod60 value (e.g.seconds))
+        case FMT_INV_SPEED: //Middle xxx  (km/h or mph)
+            if (val2>=0){
+                s_big_numbers[0] = val1;
+                s_big_number_styles[0] = STY_PLAIN;
+                s_big_number_colors[0] = color;
+                s_big_numbers[2] = val2;
+                s_big_number_styles[2] = STY_COLON;
+                s_big_number_colors[2] = color;
+            }else{
+                s_big_numbers[1] = val1;
+                s_big_number_styles[1] = STY_PLAIN;
+                s_big_number_colors[1] = color;
+            }
             break;
-        case FMT_SPEED: //Middle xxx  (km/h or mph)
-            s_big_numbers[1] = (val*36)/1000;
-            s_big_number_styles[1] = STY_PLAIN;
-            s_big_number_colors[1] = SPEED_COLOR;
-            text_layer_set_text(s_wk_big_number_unit, "km/h");
-            text_layer_set_text_color(s_wk_big_number_unit, SPEED_COLOR);
-            break;
-        case FMT_HEART: //Middle xxx  (bpm)
-            s_big_numbers[1] = val;
-            s_big_number_styles[1] = STY_PLAIN;
-            s_big_number_colors[1] = HR_COLOR;
-            text_layer_set_text(s_wk_big_number_unit, "bpm");
-            text_layer_set_text_color(s_wk_big_number_unit, HR_COLOR);
-            break;
+    }
+    if (unit){
+        if (unit != last_unit){
+            text_layer_set_text(s_wk_big_number_unit, unit);
+            text_layer_set_text_color(s_wk_big_number_unit, color);
+            last_unit = unit;
+        }
     }
     layer_mark_dirty(s_canvas_layer);
 }
@@ -234,7 +265,7 @@ static int     s_hr_interval_s[3] = {5, 5, 15};  // cycling / running / walking 
 static int     s_hr_tick_count    = 0;
 static int16_t s_last_sent_hr     = -1;
 static int     s_gps_accuracy     = 25;  // meters — relayed to Android on CMD_START
-static bool    s_imperial         = false;
+static UnitSystem    s_unit_system   = UNIT_METRIC;
 static bool    s_left_hand_mode = false;
 
 // === Windows & layers ===
@@ -256,7 +287,6 @@ static TextLayer *s_wk_speed;
 static TextLayer *s_wk_speed_unit;
 static TextLayer *s_wk_bpm;
 static TextLayer *s_wk_bpm_unit;
-static TextLayer *s_wk_big_val;
 static TextLayer *s_wk_status;
 static TextLayer *s_wk_up_hint;
 static TextLayer *s_wk_dn_hint;
@@ -264,7 +294,8 @@ static TextLayer *s_wk_sel_hint;
 static TextLayer *s_wk_back_hint;
 
 // Which custom graphical elements to show 
-static bool      s_draw_speed_decimal_dot=true;
+static int       s_speed_decimal_dot= 0;
+static int       s_speed_decimal_colon= 0;
 static int       s_dist_decimal_dot = 0;
 static bool      s_draw_bpm_dash = true;
 
@@ -293,68 +324,166 @@ static void fmt_time(char *buf, size_t n, uint32_t secs) {
   else        snprintf(buf, n, "%02lu:%02lu", m, s);
 }
 
-static void fmt_dist(char *buf, size_t n, uint32_t m) {
-  if (!s_imperial) {
-    if (m < 1000) {
-      snprintf(buf, n, "%lu", (unsigned long)m);
-      s_dist_decimal_dot=0;
-    } 
-    else if (m<100000){
-      unsigned long km  = m / 1000;
-      unsigned long dec = (m % 1000) / 10;
-      snprintf(buf, n, "%lu  %02lu", km, dec);
-      s_dist_decimal_dot=2;
+
+static void fmt_split_dist(int m, UnitSystem sys,   int16_t* val_major, int16_t* val_minor, const char** unit){
+    switch(sys){
+        default:
+        case UNIT_METRIC:
+            if(m<1000){
+                *val_major = m;
+                *val_minor = -1; //Negative value indicates no fractual value to be displayed
+                if(unit) *unit = "m";
+            }
+            else{
+                *val_major = m/1000;
+                *val_minor = m%1000;                 //Minor is /1000
+                if(unit) *unit = "km";
+            }
+            break;
+        case UNIT_IMPERIAL:
+            int feet = (m * 3359)/1024;
+            if (feet<5280){
+                *val_major = feet;
+                *val_minor = -1;
+                if(unit) *unit = "ft";
+            }
+            else{
+                int kmiles = (feet*1000)/5280;
+                *val_major = kmiles/1000;
+                *val_minor = kmiles%1000;                 //Minor is /1000
+                if(unit) *unit = "mi";
+            }
+            break;
+        case UNIT_NAUTICAL:
+            int mnm = (m *1000)/ 1852;
+            *val_major = mnm/1000;
+            *val_minor = mnm%1000;                 //Minor is /1000
+            if(unit) *unit = "nm";
+            break;
+        case UNIT_SCIENTIFIC:
+            *val_major = m;
+            *val_minor = -1;
+            if(unit) *unit = "m";
+            break;
+        case UNIT_FFF:
+            int mrd = 199*m; //millirods
+            if (mrd<40000){ //40 rods per furlong 
+                *val_major = mrd/1000;
+                *val_minor = -1;
+                if(unit) *unit = "rod";
+            }
+            else{
+                int mfur = m*100000/20117; //millifurlongs
+                *val_major = mfur/1000;
+                *val_minor = mfur%1000;                 //Minor is /1000
+                if(unit) *unit = "fur";
+            }
+            break;
     }
-    else {
-      unsigned long km  = m / 1000;
-      unsigned long dec = (m % 1000) / 100;
-      snprintf(buf, n, "%lu  %1lu", km, dec);
-      s_dist_decimal_dot=1;
+}
+static void fmt_split_speed(int cms, UnitSystem sys,   int16_t* val_major, int16_t* val_minor, const char** unit, bool reciprocal){
+    if (reciprocal){
+        switch(sys){
+            default:
+            case UNIT_METRIC:
+                int min_per_kkm = 1666666/cms;
+                *val_major = min_per_kkm/1000;
+                *val_minor = ((min_per_kkm%1000)*60)/100;  //Minor is /60
+                if(unit) *unit = "/km";
+                break;
+            case UNIT_IMPERIAL:
+                int min_per_kmi = 2682233/cms;
+                *val_major = min_per_kmi/1000;
+                *val_minor = ((min_per_kmi%1000)*60)/100;  //Minor is /60
+                if(unit) *unit = "/mi";
+                break;
+            case UNIT_NAUTICAL:
+                int min_per_knm = 3086666/cms;
+                *val_major = min_per_knm/1000;
+                *val_minor = ((min_per_knm%1000)*60)/100; //Minor is /60
+                if(unit) *unit = "/nm";
+                break;
+            case UNIT_SCIENTIFIC:
+                int s_per_km = 100000/cms;
+                *val_major = s_per_km/1000;
+                *val_minor = s_per_km%1000;                 //Minor is /1000
+                if(unit) *unit = "s/m";
+                break;
+            case UNIT_FFF:
+                int uftn_per_kfur = 16639371/cms;
+                *val_major = uftn_per_kfur/1000;
+                *val_minor = uftn_per_kfur%1000;                 //Minor is /1000
+                if(unit) *unit = "µfn/fu";
+                break;
+        }
     }
-  } else {
-    if (m < 1609) {
-      unsigned long ft = (unsigned long)m * 5000 / 1524;  // m → feet
-      snprintf(buf, n, "%lu", ft);
-      s_dist_decimal_dot=0;
-    } else if (m<160900){
-      unsigned long mi  = m / 1609;
-      unsigned long dec = (m % 1609) * 100 / 1609;
-      snprintf(buf, n, "%lu  %02lu", mi, dec);
-      s_dist_decimal_dot=2;
-    } else {
-      unsigned long mi  = m / 1609;
-      unsigned long dec = (m % 1609) * 10 / 1609;
-      snprintf(buf, n, "%lu  %1lu", mi, dec);
-      s_dist_decimal_dot=1;
+    else{
+        switch(sys){
+            default: 
+            // Apart from m/s, Ignore fractional km/h, it just clutters
+            case UNIT_METRIC:
+                int meter_per_h = cms*36;
+                *val_major = meter_per_h/1000;
+                *val_minor = -1; //meter_per_h%1000;
+                if(unit) *unit = "km/h";
+                break;
+            case UNIT_IMPERIAL:
+                int kmiles_per_h = (cms*224)/10;
+                *val_major = kmiles_per_h/1000;
+                *val_minor = -1;//kmiles_per_h%1000;
+                if(unit) *unit = "mph";
+                break;
+            case UNIT_NAUTICAL:
+                int mknots = (cms*19438)/1000;
+                *val_major = mknots/1000;
+                *val_minor = -1;//mknots%1000;
+                if(unit) *unit = "kt";
+                break;
+            case UNIT_SCIENTIFIC:
+                *val_major = cms/100;
+                *val_minor = (cms*10)%1000;                 //Minor is /1000
+                if(unit) *unit = "m/s";
+                break;
+            case UNIT_FFF:
+                int fur_per_ftn = (cms * 60129)/1000; //cms*1000000/100/201.168*1.2096
+                *val_major = fur_per_ftn/1000;
+                *val_minor = fur_per_ftn%1000;                 //Minor is /1000
+                if(unit) *unit = "kfu/fn";
+                break;
+        }
     }
-  }
 }
 
-static void fmt_speed(char *buf, size_t n, uint32_t cms, int sport) {
-  if (sport == SPORT_CYCLING) {
-    if (!s_imperial) {
-      if (cms < 10) { snprintf(buf, n, "0  0"); return; }
-      unsigned long i = (cms * 36) / 1000;
-      unsigned long d = ((cms * 36) % 1000) / 10;
-      snprintf(buf, n, "%lu %01lu", i,d);
-    } else {
-      if (cms < 10) { snprintf(buf, n, "0  0"); return; }
-      unsigned long i = (cms * 36) / 1609;
-      unsigned long d = ((cms * 36) % 1609) * 100 / 1609;
-      snprintf(buf, n, "%lu %01lu", i, d);
+static void fmt_split_hr(int bpm, UnitSystem sys,   int16_t* val_major, int16_t* val_minor, const char** unit){
+    switch(sys){
+        default:
+        case UNIT_METRIC:
+        case UNIT_IMPERIAL:
+            *val_major = bpm;
+            *val_minor = -1;
+            if(unit) *unit = "bpm";
+            break;
+            break;
+        case UNIT_NAUTICAL:
+            *val_major = bpm;
+            *val_minor = -1;
+            if(unit) *unit = "rpm";
+            break;
+        case UNIT_SCIENTIFIC:
+            int kbps = (bpm*1000)/60;
+            *val_major = kbps/1000;
+            *val_minor = kbps%1000;                 //Minor is /1000
+            if(unit) *unit = "Hz";
+            break;
+        case UNIT_FFF:  // Beats per milli fortnight
+            int bpuf = (bpm*1000000)/20160;
+            *val_major = bpuf/1000;
+            *val_minor = bpuf%1000;                 //Minor is /1000
+            if(unit) *unit = "/mfn";
+            break;
     }
-  } else {
-    if (!s_imperial) {
-      if (cms < 10) { snprintf(buf, n, "  :  "); return; }
-      unsigned long spk = 100000 / cms;
-      snprintf(buf, n, "%lu:%02lu", spk / 60, spk % 60);
-    } else {
-      if (cms < 10) { snprintf(buf, n, "  :  "); return; }
-      unsigned long spm = 160934 / cms;
-      snprintf(buf, n, "%lu:%02lu", spm / 60, spm % 60);
-    }
-  }
 }
+
 
 static uint16_t minutes_since_midnight(void){
   time_t temp = time(NULL);
@@ -444,8 +573,8 @@ static void prv_inbox_received(DictionaryIterator *iter, void *ctx) {
   }
   t = dict_find(iter, MESSAGE_KEY_SETTINGS_UNITS);
   if (t) {
-    s_imperial = (t->value->int8 == 1);
-    persist_write_int(PERSIST_KEY_UNITS, s_imperial ? 1 : 0);
+    s_unit_system = (UnitSystem)(t->value->int8);
+    persist_write_int(PERSIST_KEY_UNITS, (int8_t) s_unit_system);
   }
   t = dict_find(iter, MESSAGE_KEY_SETTINGS_ROTATION);
   if (t) {
@@ -507,7 +636,7 @@ static void prv_send_creds(void) {
   dict_write_int8(iter, MESSAGE_KEY_SETTINGS_HR_INTERVAL_WALKING,
                   (int8_t)s_hr_interval_s[SPORT_WALKING]);
   dict_write_int8(iter, MESSAGE_KEY_SETTINGS_GPS_ACCURACY, (int8_t)s_gps_accuracy);
-  dict_write_int8(iter, MESSAGE_KEY_SETTINGS_UNITS, s_imperial ? 1 : 0);
+  dict_write_int8(iter, MESSAGE_KEY_SETTINGS_UNITS, (int8_t) s_unit_system);
   dict_write_int8(iter, MESSAGE_KEY_SETTINGS_ROTATION, s_left_hand_mode ? 1 : 0);
   dict_write_cstring(iter, MESSAGE_KEY_SETTINGS_DOWNLOAD_SUBFOLDER, subfolder);
   if (have_creds) {
@@ -524,7 +653,7 @@ static void prv_send_cmd(int action) {
   if (action == CMD_START) {
     dict_write_int8(iter, MESSAGE_KEY_CMD_SPORT,            (int8_t)s_sport);
     dict_write_int8(iter, MESSAGE_KEY_SETTINGS_GPS_ACCURACY,(int8_t)s_gps_accuracy);
-    dict_write_int8(iter, MESSAGE_KEY_SETTINGS_UNITS,       s_imperial ? 1 : 0);
+    dict_write_int8(iter, MESSAGE_KEY_SETTINGS_UNITS,       (int8_t)s_unit_system);
     dict_write_int8(iter, MESSAGE_KEY_SETTINGS_ROTATION,    s_left_hand_mode ? 1 : 0);
   }
   app_message_outbox_send();
@@ -551,69 +680,120 @@ static void prv_read_hr(void) {
   }
 }
 
-// === Workout display ===
-static void refresh_all_units(void){
-    // Check which updates are needed before refreshing
-    static ViewMode last_viewmode = VIEW_ALL;
-
-    if (s_viewmode == VIEW_ALL){
-        if (!s_imperial) {
-            text_layer_set_text(s_wk_dist_unit,    (s_distance_m<1000)?"m":"km");
-        }
-        else{
-            text_layer_set_text(s_wk_dist_unit,    (s_distance_m<1609)?"ft":"mi");
-        }
-
-
-        if (s_sport == SPORT_CYCLING) {
-            if (!s_imperial) {
-                text_layer_set_text(s_wk_speed_unit,    "km/h");
-            }
-            else{
-                text_layer_set_text(s_wk_speed_unit,    "mph");
-            }
-            s_draw_speed_decimal_dot=true;
-        }
-        else{
-            if (!s_imperial) {
-                text_layer_set_text(s_wk_speed_unit,    "/km");
-            }
-            else{
-                text_layer_set_text(s_wk_speed_unit,    "/mi");
-            }
-            s_draw_speed_decimal_dot=false;
-        }
-        text_layer_set_text(s_wk_bpm_unit,      "bpm");
-        layer_mark_dirty(s_canvas_layer);
-    }
-    else if (last_viewmode == VIEW_ALL){
-        text_layer_set_text(s_wk_dist_unit,     "");
-        text_layer_set_text(s_wk_speed_unit,    "");
-        text_layer_set_text(s_wk_bpm_unit,      "");
-        s_draw_speed_decimal_dot=false;
-        s_dist_decimal_dot = 0;
-        s_draw_bpm_dash = false;
-        layer_mark_dirty(s_canvas_layer);
-    }
-    last_viewmode = s_viewmode;
-}
 
 
 static void update_workout_display(void) {
-  fmt_time(s_wk_time_buf,   sizeof(s_wk_time_buf),  get_elapsed());
-  fmt_dist(s_wk_dist_buf,   sizeof(s_wk_dist_buf),  s_distance_m);
-  fmt_speed(s_wk_speed_buf, sizeof(s_wk_speed_buf), s_speed_cms, s_sport);
-  
+   
+  static ViewMode last_viewmode = VIEW_LAST;
+  bool reciprocal_speed = ((s_sport != SPORT_CYCLING) && (s_unit_system != UNIT_SCIENTIFIC));
+  const char* unit_ptr;
+  int16_t val_major;
+  int16_t val_minor;
+  bool draw_units = true;//(last_viewmode != VIEW_ALL);
+  // FOUR VALUES MODE
   if (s_viewmode==VIEW_ALL){
-      if (s_hr_bpm > 0){ 
-        snprintf(s_wk_bpm_buf, sizeof(s_wk_bpm_buf), "%d", s_hr_bpm);
-        s_draw_bpm_dash = false;
+      //Elapsed Time
+      fmt_time(s_wk_time_buf,   sizeof(s_wk_time_buf),  get_elapsed());
+      text_layer_set_text(s_wk_time, s_wk_time_buf);
+      //Distance  
+      fmt_split_dist(s_distance_m, s_unit_system, &val_major, &val_minor, &unit_ptr);
+      if (draw_units) text_layer_set_text(s_wk_dist_unit, unit_ptr);
+      if (val_minor<0){ 
+        snprintf(s_wk_dist_buf, sizeof(s_wk_dist_buf), "%d", val_major);
+        s_dist_decimal_dot=0;
+      }else if (val_major<100){
+        snprintf(s_wk_dist_buf, sizeof(s_wk_dist_buf), "%d  %02d", val_major,val_minor/10);
+        s_dist_decimal_dot=2;
+      }else{
+        snprintf(s_wk_dist_buf, sizeof(s_wk_dist_buf), "%d  %01d", val_major,val_minor/100);
+        s_dist_decimal_dot=1;
       }
-      else {              
+      text_layer_set_text(s_wk_dist,     s_wk_dist_buf);
+      //Speed
+      fmt_split_speed(s_speed_cms, s_unit_system, &val_major, &val_minor, &unit_ptr, reciprocal_speed);
+      if (draw_units) text_layer_set_text(s_wk_speed_unit, unit_ptr);
+      if (reciprocal_speed){
+        snprintf(s_wk_speed_buf, sizeof(s_wk_dist_buf), "%d   %02d", val_major,val_minor/100);
+        if(s_unit_system==UNIT_FFF){ //FFF system returns in plane decimal
+            s_speed_decimal_dot=2;
+            s_speed_decimal_colon=0;
+        }
+        else{                        //Other systems returns in mm:ss 
+            s_speed_decimal_dot=0;
+            s_speed_decimal_colon=2;
+        }
+      }
+      else{
+        snprintf(s_wk_speed_buf, sizeof(s_wk_dist_buf), "%d  %01d", val_major,val_minor/100);
+        s_speed_decimal_dot=1;
+        s_speed_decimal_colon=0;
+      }
+      text_layer_set_text(s_wk_speed,     s_wk_speed_buf);
+      //Heart rate
+      fmt_split_hr(s_hr_bpm, s_unit_system, &val_major, &val_minor, &unit_ptr);
+      if (draw_units) text_layer_set_text(s_wk_bpm_unit, unit_ptr);
+      if (val_major<=0){
         snprintf(s_wk_bpm_buf, sizeof(s_wk_bpm_buf), " ");
         s_draw_bpm_dash = true;
       }
+      else if (val_minor<0){ 
+        snprintf(s_wk_bpm_buf, sizeof(s_wk_bpm_buf), "%d", val_major);
+        s_draw_bpm_dash = false;
+      }
+      text_layer_set_text(s_wk_bpm,     s_wk_bpm_buf);
+      //
+      layer_mark_dirty(s_canvas_layer);
   }
+  else if (last_viewmode == VIEW_ALL){ // If leaving this viewmode, clear all objects
+      s_draw_bpm_dash = false;
+      s_speed_decimal_colon=0;
+      s_speed_decimal_dot=0;
+      s_dist_decimal_dot=0;
+      text_layer_set_text(s_wk_time,    "");
+      text_layer_set_text(s_wk_dist,    "");
+      text_layer_set_text(s_wk_speed,   "");
+      text_layer_set_text(s_wk_bpm,     "");
+      text_layer_set_text(s_wk_dist_unit,     "");
+      text_layer_set_text(s_wk_speed_unit,    "");
+      text_layer_set_text(s_wk_bpm_unit,      "");
+  }
+  
+  // SINGLE VALUE BIG NUMBER MODE
+  switch (s_viewmode){
+      case VIEW_ALL:
+          if (last_viewmode != VIEW_ALL){ // If leaving this viewmode, clear all objects
+            draw_big_number(-1,-1,FMT_CLEAR,NULL);
+          }
+          break;
+      case VIEW_CLOCK:
+          int m = minutes_since_midnight();
+          draw_big_number(m/60,m%60,FMT_CLOCK,"time");
+          break;
+      case VIEW_TIME:
+          int s = get_elapsed();
+          draw_big_number(s/60,s%60,FMT_TIME,"elapsed");
+          break;
+      case VIEW_DIST:
+          fmt_split_dist(s_distance_m, s_unit_system, &val_major, &val_minor, &unit_ptr);
+          draw_big_number(val_major, val_minor,FMT_DIST,unit_ptr);
+          break;
+      case VIEW_SPEED:
+          fmt_split_speed(s_speed_cms, s_unit_system, &val_major, &val_minor, &unit_ptr,reciprocal_speed);
+          if (reciprocal_speed){
+            draw_big_number(val_major, val_minor,FMT_INV_SPEED,unit_ptr);
+          }else{
+            draw_big_number(val_major, val_minor,FMT_SPEED,unit_ptr);
+          }
+          break;
+      case VIEW_HEART:
+          fmt_split_hr(s_hr_bpm, s_unit_system, &val_major, &val_minor, &unit_ptr);
+          draw_big_number(val_major, val_minor,FMT_HEART,unit_ptr);
+          break;
+      case VIEW_LAST: //Just a placeholder, will not happen
+          break;
+
+  }
+
 
   // Status row: HRM/GPS icons normally; state messages override when needed.
   // STATE_DONE: leave s_wk_status_buf as-is (set by inbox handler with result).
@@ -639,35 +819,9 @@ static void update_workout_display(void) {
   text_layer_set_text_color(s_wk_status,
     s_state == STATE_DONE ? GColorWhite : GColorLightGray);
 
-  switch (s_viewmode){
-    case VIEW_ALL:
-      text_layer_set_text(s_wk_time,     s_wk_time_buf);
-      text_layer_set_text(s_wk_dist,     s_wk_dist_buf);
-      text_layer_set_text(s_wk_speed,    s_wk_speed_buf);
-      text_layer_set_text(s_wk_bpm,      s_wk_bpm_buf);
-      refresh_all_units();
-      draw_big_number(s_hr_bpm,FMT_CLEAR);
-      break;
-    case VIEW_CLOCK:
-        draw_big_number(minutes_since_midnight(),FMT_CLOCK);
-        break;
-    case VIEW_TIME:
-        draw_big_number(get_elapsed(),FMT_TIME);
-        break;
-    case VIEW_DIST:
-        draw_big_number(s_distance_m,FMT_DIST);
-        break;
-    case VIEW_SPEED:
-        draw_big_number(s_speed_cms,FMT_SPEED);
-        break;
-    case VIEW_HEART:
-        draw_big_number(s_hr_bpm,FMT_HEART);
-        break;
-    case VIEW_LAST: //Just a placeholder, will not happen
-        break;
-    
-  }
   text_layer_set_text(s_wk_status,   s_wk_status_buf);
+  
+  last_viewmode = s_viewmode;
 }
 
 
@@ -686,34 +840,41 @@ static void prv_tick(struct tm *tick_time, TimeUnits units_changed) {
     prv_read_hr();
     prv_send_hr();
     if (s_hr_bpm != prev_hr) {
+      int16_t val_major;
+      int16_t val_minor;
+      fmt_split_hr(s_hr_bpm, s_unit_system, &val_major, &val_minor, NULL);
       if (s_viewmode == VIEW_ALL){
-          if (s_hr_bpm > 0){ 
-            snprintf(s_wk_bpm_buf, sizeof(s_wk_bpm_buf), "%d", s_hr_bpm);
-            s_draw_bpm_dash = false;
-          }
-          else{              
+          //text_layer_set_text(s_wk_bpm_unit, unit_ptr);
+          if (val_major<=0){
             snprintf(s_wk_bpm_buf, sizeof(s_wk_bpm_buf), " ");
             s_draw_bpm_dash = true;
           }
+          else if (val_minor<0){ 
+            snprintf(s_wk_bpm_buf, sizeof(s_wk_bpm_buf), "%d", val_major);
+            s_draw_bpm_dash = false;
+          }
+          text_layer_set_text(s_wk_bpm,     s_wk_bpm_buf);
+
           layer_mark_dirty(s_canvas_layer);
-          text_layer_set_text(s_wk_bpm, s_wk_bpm_buf);
       }
       if (s_viewmode == VIEW_HEART){
-          draw_big_number(s_hr_bpm,FMT_HEART);
+          draw_big_number(val_major, val_minor,FMT_HEART,NULL);
       }
     }
   }
 
   // Elapsed time is the only field that changes every second — redraw it alone.
-  fmt_time(s_wk_time_buf, sizeof(s_wk_time_buf), get_elapsed());
   if (s_viewmode == VIEW_ALL){
+    fmt_time(s_wk_time_buf, sizeof(s_wk_time_buf), get_elapsed());
     text_layer_set_text(s_wk_time, s_wk_time_buf);
   }
   if (s_viewmode == VIEW_TIME){
-      draw_big_number(get_elapsed(),FMT_TIME);
+      int s = get_elapsed();
+      draw_big_number(s/60,s%60,FMT_TIME,NULL);
   }
   if (s_viewmode == VIEW_CLOCK){
-      draw_big_number(minutes_since_midnight(),FMT_CLOCK);
+      int m = minutes_since_midnight();
+      draw_big_number(m/60,m%60,FMT_CLOCK,NULL);
   }
 }
 
@@ -880,16 +1041,7 @@ static void prv_wk_back(ClickRecognizerRef r, void *ctx) {
 static void prv_wk_down(ClickRecognizerRef r, void *ctx) {
     s_viewmode++;
     s_viewmode %= VIEW_LAST;
-    
-    if (s_viewmode != VIEW_ALL){
-        text_layer_set_text(s_wk_time,     "");
-        text_layer_set_text(s_wk_dist,     "");
-        text_layer_set_text(s_wk_speed,    "");
-        text_layer_set_text(s_wk_bpm,      "");
-    }    
     update_workout_display();
-    refresh_all_units();
-    layer_mark_dirty(s_canvas_layer);
 }
 
 static void prv_wk_click_config(void *ctx) {
@@ -1038,15 +1190,21 @@ static void canvas_update_proc(Layer *layer, GContext *ctx) {
   // Dist decimal dot
   if (s_dist_decimal_dot){
       graphics_context_set_fill_color(ctx, DIST_COLOR);
-      graphics_fill_circle(ctx, GPoint(s_bounds_width-s_unit_field_width-(30*s_dist_decimal_dot),s_top_margin+1*s_lineheight+45), 4);        
+      graphics_fill_circle(ctx, GPoint(s_bounds_width-s_unit_field_width-(28*s_dist_decimal_dot)-5,s_top_margin+1*s_lineheight+45), 4);        
   }
   // Speed decimal dot
-  if (s_draw_speed_decimal_dot){
+  if (s_speed_decimal_dot){
       graphics_context_set_fill_color(ctx, SPEED_COLOR);
-      graphics_fill_circle(ctx, GPoint(s_bounds_width-s_unit_field_width-30,s_top_margin+2*s_lineheight+45), 4);
+      graphics_fill_circle(ctx, GPoint(s_bounds_width-s_unit_field_width-(28*s_speed_decimal_dot)-5,s_top_margin+2*s_lineheight+45), 4);
+  }
+  // Speed decimal colon
+  if (s_speed_decimal_colon){
+      graphics_context_set_fill_color(ctx, SPEED_COLOR);
+      graphics_fill_circle(ctx, GPoint(s_bounds_width-s_unit_field_width-(28*s_speed_decimal_colon)-5,s_top_margin+2*s_lineheight+40), 4);
+      graphics_fill_circle(ctx, GPoint(s_bounds_width-s_unit_field_width-(28*s_speed_decimal_colon)-5,s_top_margin+2*s_lineheight+25), 4);
   }
   if (s_draw_bpm_dash){
-      graphics_context_set_fill_color(ctx, HR_COLOR);
+      graphics_context_set_fill_color(ctx, HEART_COLOR);
       int x = s_bounds_width-s_unit_field_width-35;
       int w = 10;
       int y = s_top_margin+3*s_lineheight+45-8;
@@ -1101,11 +1259,6 @@ static void prv_workout_load(Window *win) {
   GRect  bounds = layer_get_bounds(root);
  
 
-  // Load all 13 PNG images into memory loops
-  for(int i = 0; i < 13; i++) {
-    s_digit_bitmaps[i] = gbitmap_create_with_resource(RESOURCE_IDS[i]);
-  }
-  temp_digit_bitmap = gbitmap_create_with_resource(RESOURCE_IDS[0]);
 
   // Create canvas layer for custom graphics
   s_canvas_layer = layer_create(bounds);
@@ -1172,14 +1325,14 @@ static void prv_workout_load(Window *win) {
   text_layer_set_text_alignment(s_wk_bpm, GTextAlignmentRight);
   text_layer_set_font(s_wk_bpm, fonts_get_system_font(VALUE_FONT));
   text_layer_set_background_color(s_wk_bpm, GColorClear);
-  text_layer_set_text_color(s_wk_bpm, HR_COLOR);
+  text_layer_set_text_color(s_wk_bpm, HEART_COLOR);
   layer_add_child(root, text_layer_get_layer(s_wk_bpm));
   // Heart rate unit
   s_wk_bpm_unit = text_layer_create(GRect(w-s_unit_field_width, s_top_margin + 3* s_lineheight +font_hdiff, s_unit_field_width, 32));
   text_layer_set_text_alignment(s_wk_bpm_unit, GTextAlignmentLeft);
   text_layer_set_font(s_wk_bpm_unit, fonts_get_system_font(UNIT_FONT));
   text_layer_set_background_color(s_wk_bpm_unit, GColorClear);
-  text_layer_set_text_color(s_wk_bpm_unit, HR_COLOR);
+  text_layer_set_text_color(s_wk_bpm_unit, HEART_COLOR);
   layer_add_child(root, text_layer_get_layer(s_wk_bpm_unit));
 
   // BIG SINGLE VALUE UNIT 
@@ -1272,10 +1425,16 @@ static void prv_init(void) {
   iv = persist_read_int(PERSIST_KEY_GPS_ACCURACY);
   if (iv == 15 || iv == 25 || iv == 50) s_gps_accuracy = iv;
   iv = persist_read_int(PERSIST_KEY_UNITS);
-  if (iv == 1) s_imperial = true;
+  if (iv >= 0 && iv < 5) s_unit_system = (UnitSystem)iv;
   iv = persist_read_int(PERSIST_KEY_ROTATION);
   if (iv == 1) s_left_hand_mode = true;
   APP_LOG(APP_LOG_LEVEL_INFO, "prv_init PERSIST_KEY_ROTATION read %d", iv);  
+  
+  // Load all 13 PNG images into memory loops
+  for(int i = 0; i < 13; i++) {
+    s_digit_bitmaps[i] = gbitmap_create_with_resource(RESOURCE_IDS[i]);
+  }
+  temp_digit_bitmap = gbitmap_create_with_resource(RESOURCE_IDS[0]);
 
   s_select_win = window_create();
   window_set_background_color(s_select_win, GColorBlack);
@@ -1302,6 +1461,12 @@ static void prv_init(void) {
 static void prv_deinit(void) {
   stop_timer();
   if (s_upload_done_timer) { app_timer_cancel(s_upload_done_timer); s_upload_done_timer = NULL; }
+
+  // Load all 13 PNG images into memory loops
+  for(int i = 0; i < 13; i++) {
+    gbitmap_destroy(s_digit_bitmaps[i]);
+  }
+  gbitmap_destroy(temp_digit_bitmap);
   window_destroy(s_select_win);
   window_destroy(s_workout_win);
   fonts_unload_custom_font(s_icon_font_14);

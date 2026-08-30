@@ -156,6 +156,9 @@ var CONFIG_HTML = '<!DOCTYPE html>' +
 '<select id="units">' +
 '<option value="0">Metric — km, km/h, min/km</option>' +
 '<option value="1">Imperial — mi, mph, min/mi</option>' +
+'<option value="2">Nautical — nm, knt, min/nm</option>' +
+'<option value="3">Scientific — m, m/s, s/m</option>' +
+'<option value="4">FFF — fur, kfur/ftn, µftn/fur </option>' +
 '</select>' +
 '<label>Rotation</label>' +
 '<select id="rotation">' +
@@ -237,7 +240,7 @@ Pebble.addEventListener('webviewclosed', function(e) {
     iv = parseInt(data.gpsAccuracy || '0', 10);
     if (iv === 15 || iv === 25 || iv === 50) { GPS_ACCURACY = iv; storageSet('gpsAccuracy', String(iv)); }
     iv = parseInt(data.units || '-1', 10);
-    if (iv === 0 || iv === 1) { UNITS = iv; storageSet('units', String(iv)); }
+    if (iv >= 0 && iv <= 4) { UNITS = iv; storageSet('units', String(iv)); }
     iv = parseInt(data.rotation || '-1', 10);
     if (iv === 0 || iv === 1) { ROTATION = iv; storageSet('rotation', String(iv)); }
     if (data.downloadSubfolder !== undefined) {
@@ -316,7 +319,7 @@ function applyWatchSettings(msg) {
     storageSet('gpsAccuracy', String(iv));
   }
   iv = parseInt(msg.SETTINGS_UNITS, 10);
-  if (iv === 0 || iv === 1) {
+  if (iv >= 0 && iv <= 4) {
     UNITS = iv;
     storageSet('units', String(iv));
   }
