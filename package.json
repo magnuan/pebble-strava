@@ -59,6 +59,84 @@
           "file": "images/strava_logo.png"
         },
         {
+          "type": "bitmap",
+          "name": "IMAGE_DIGIT_0",
+          "file": "images/digit_0.png",
+          "memoryFormat": "4BitPalette"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_DIGIT_1",
+          "file": "images/digit_1.png",
+          "memoryFormat": "4BitPalette"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_DIGIT_2",
+          "file": "images/digit_2.png",
+          "memoryFormat": "4BitPalette"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_DIGIT_3",
+          "file": "images/digit_3.png",
+          "memoryFormat": "4BitPalette"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_DIGIT_4",
+          "file": "images/digit_4.png",
+          "memoryFormat": "4BitPalette"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_DIGIT_5",
+          "file": "images/digit_5.png",
+          "memoryFormat": "4BitPalette"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_DIGIT_6",
+          "file": "images/digit_6.png",
+          "memoryFormat": "4BitPalette"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_DIGIT_7",
+          "file": "images/digit_7.png",
+          "memoryFormat": "4BitPalette"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_DIGIT_8",
+          "file": "images/digit_8.png",
+          "memoryFormat": "4BitPalette"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_DIGIT_9",
+          "file": "images/digit_9.png",
+          "memoryFormat": "4BitPalette"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_DIGIT_DOT",
+          "file": "images/digit_dot.png",
+          "memoryFormat": "4BitPalette"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_DIGIT_COLON",
+          "file": "images/digit_colon.png",
+          "memoryFormat": "4BitPalette"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_DIGIT_DASH",
+          "file": "images/digit_dash.png",
+          "memoryFormat": "4BitPalette"
+        },
+        {
           "type": "font",
           "name": "FONT_ICONS_14",
           "file": "fonts/icons.ttf",
