@@ -120,7 +120,7 @@ static NumberStyle s_big_number_styles[3] = {STY_PLAIN};
 static GColor s_big_number_colors[3] = {GColorWhite};
 static TextLayer *s_wk_big_number_unit;
 
-#define COLORS_IN_PALETTE 16
+#define COLORS_IN_PALETTE 4
 
 static void deep_copy_bitmap(GBitmap *dest, const GBitmap *src) {
   if (!dest || !src) return;
