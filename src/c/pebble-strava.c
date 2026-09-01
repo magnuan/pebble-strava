@@ -32,9 +32,7 @@
 
 
 /*
-In four value mode km/h gets rendered wrong.
-Speed dot from four value mode, sometimes sticks
-HR monitor freezes
+Decimal speed in 4 value mode
 
 */
 
@@ -193,6 +191,29 @@ static void draw_big_number(int val1, int val2, NumberFormat format, const char*
             s_big_number_colors[2] = color;
             break;
         case FMT_DIST:  //Single line for integers, two lines with decimal dot for fracional numbers (val2 is millis)
+            if (val2>=0){
+                s_big_numbers[0] = val1;
+                s_big_number_styles[0] = STY_PLAIN;
+                s_big_number_colors[0] = color;
+                s_big_numbers[2] = val2/10;
+                s_big_number_styles[2] = STY_DOT;
+                s_big_number_colors[2] = color;
+            }else{
+                if (val1>=1000){
+                    s_big_numbers[0] = val1/1000;
+                    s_big_number_styles[0] = STY_PLAIN;
+                    s_big_number_colors[0] = color;
+                    s_big_numbers[2] = val1%1000;
+                    s_big_number_styles[2] = STY_2LEAD0;
+                    s_big_number_colors[2] = color;
+                }
+                else{
+                    s_big_numbers[1] = val1;
+                    s_big_number_styles[1] = STY_PLAIN;
+                    s_big_number_colors[1] = color;
+                }
+            }
+            break;
         case FMT_SPEED: 
         case FMT_HEART: 
             if (val2>=0){
@@ -297,6 +318,7 @@ static TextLayer *s_wk_back_hint;
 static int       s_speed_decimal_dot= 0;
 static int       s_speed_decimal_colon= 0;
 static int       s_dist_decimal_dot = 0;
+static int       s_bpm_decimal_dot = 0;
 static bool      s_draw_bpm_dash = true;
 
 static const int s_unit_field_width = 70;
@@ -388,19 +410,19 @@ static void fmt_split_speed(int cms, UnitSystem sys,   int16_t* val_major, int16
             case UNIT_METRIC:
                 int min_per_kkm = 1666666/cms;
                 *val_major = min_per_kkm/1000;
-                *val_minor = ((min_per_kkm%1000)*60)/100;  //Minor is /60
+                *val_minor = ((min_per_kkm%1000)*60)/1000;  //Minor is /60
                 if(unit) *unit = "/km";
                 break;
             case UNIT_IMPERIAL:
                 int min_per_kmi = 2682233/cms;
                 *val_major = min_per_kmi/1000;
-                *val_minor = ((min_per_kmi%1000)*60)/100;  //Minor is /60
+                *val_minor = ((min_per_kmi%1000)*60)/1000;  //Minor is /60
                 if(unit) *unit = "/mi";
                 break;
             case UNIT_NAUTICAL:
                 int min_per_knm = 3086666/cms;
                 *val_major = min_per_knm/1000;
-                *val_minor = ((min_per_knm%1000)*60)/100; //Minor is /60
+                *val_minor = ((min_per_knm%1000)*60)/1000; //Minor is /60
                 if(unit) *unit = "/nm";
                 break;
             case UNIT_SCIENTIFIC:
@@ -416,27 +438,30 @@ static void fmt_split_speed(int cms, UnitSystem sys,   int16_t* val_major, int16
                 if(unit) *unit = "µfn/fu";
                 break;
         }
+        if (cms<20){ //reciprocal speed is invalid if speed is close to 0
+            *val_major = -1;
+            *val_minor = -1;
+        }
     }
     else{
         switch(sys){
             default: 
-            // Apart from m/s, Ignore fractional km/h, it just clutters
             case UNIT_METRIC:
                 int meter_per_h = cms*36;
                 *val_major = meter_per_h/1000;
-                *val_minor = -1; //meter_per_h%1000;
+                *val_minor = meter_per_h%1000;
                 if(unit) *unit = "km/h";
                 break;
             case UNIT_IMPERIAL:
                 int kmiles_per_h = (cms*224)/10;
                 *val_major = kmiles_per_h/1000;
-                *val_minor = -1;//kmiles_per_h%1000;
+                *val_minor = kmiles_per_h%1000;
                 if(unit) *unit = "mph";
                 break;
             case UNIT_NAUTICAL:
                 int mknots = (cms*19438)/1000;
                 *val_major = mknots/1000;
-                *val_minor = -1;//mknots%1000;
+                *val_minor = mknots%1000;
                 if(unit) *unit = "kt";
                 break;
             case UNIT_SCIENTIFIC:
@@ -683,7 +708,8 @@ static void prv_read_hr(void) {
 
 
 static void update_workout_display(void) {
-   
+  s_speed_cms=345;
+  s_unit_system = UNIT_METRIC; 
   static ViewMode last_viewmode = VIEW_LAST;
   bool reciprocal_speed = ((s_sport != SPORT_CYCLING) && (s_unit_system != UNIT_SCIENTIFIC));
   const char* unit_ptr;
@@ -713,7 +739,13 @@ static void update_workout_display(void) {
       fmt_split_speed(s_speed_cms, s_unit_system, &val_major, &val_minor, &unit_ptr, reciprocal_speed);
       if (draw_units) text_layer_set_text(s_wk_speed_unit, unit_ptr);
       if (reciprocal_speed){
-        snprintf(s_wk_speed_buf, sizeof(s_wk_dist_buf), "%d   %02d", val_major,val_minor/100);
+        APP_LOG(APP_LOG_LEVEL_INFO,"val_major=%d val_minor=%d",val_major,val_minor);
+        if (val_major<0){
+            snprintf(s_wk_speed_buf, sizeof(s_wk_dist_buf), " "); //Invalid reciprocal speed, inf min/km
+        }
+        else{
+            snprintf(s_wk_speed_buf, sizeof(s_wk_dist_buf), "%d   %02d", val_major,val_minor);
+        }
         if(s_unit_system==UNIT_FFF){ //FFF system returns in plane decimal
             s_speed_decimal_dot=2;
             s_speed_decimal_colon=0;
@@ -732,13 +764,20 @@ static void update_workout_display(void) {
       //Heart rate
       fmt_split_hr(s_hr_bpm, s_unit_system, &val_major, &val_minor, &unit_ptr);
       if (draw_units) text_layer_set_text(s_wk_bpm_unit, unit_ptr);
-      if (val_major<=0){
-        snprintf(s_wk_bpm_buf, sizeof(s_wk_bpm_buf), " ");
+      if (val_major<=0 && val_minor<=0){
+        snprintf(s_wk_bpm_buf, sizeof(s_wk_bpm_buf), " ");      //No heart rate
         s_draw_bpm_dash = true;
+        s_bpm_decimal_dot = 0;
       }
       else if (val_minor<0){ 
-        snprintf(s_wk_bpm_buf, sizeof(s_wk_bpm_buf), "%d", val_major);
+        snprintf(s_wk_bpm_buf, sizeof(s_wk_bpm_buf), "%d", val_major);  //Heart rate in integer value
         s_draw_bpm_dash = false;
+        s_bpm_decimal_dot = 0;
+      }
+      else{ 
+        snprintf(s_wk_bpm_buf, sizeof(s_wk_bpm_buf), "%d   %02d", val_major,val_minor/10);
+        s_draw_bpm_dash = false;
+        s_bpm_decimal_dot = 2;
       }
       text_layer_set_text(s_wk_bpm,     s_wk_bpm_buf);
       //
@@ -749,6 +788,7 @@ static void update_workout_display(void) {
       s_speed_decimal_colon=0;
       s_speed_decimal_dot=0;
       s_dist_decimal_dot=0;
+      s_bpm_decimal_dot=0;
       text_layer_set_text(s_wk_time,    "");
       text_layer_set_text(s_wk_dist,    "");
       text_layer_set_text(s_wk_speed,   "");
@@ -782,7 +822,7 @@ static void update_workout_display(void) {
           if (reciprocal_speed){
             draw_big_number(val_major, val_minor,FMT_INV_SPEED,unit_ptr);
           }else{
-            draw_big_number(val_major, val_minor,FMT_SPEED,unit_ptr);
+            draw_big_number(val_major, -1,FMT_SPEED,unit_ptr);
           }
           break;
       case VIEW_HEART:
@@ -1202,6 +1242,11 @@ static void canvas_update_proc(Layer *layer, GContext *ctx) {
       graphics_context_set_fill_color(ctx, SPEED_COLOR);
       graphics_fill_circle(ctx, GPoint(s_bounds_width-s_unit_field_width-(28*s_speed_decimal_colon)-5,s_top_margin+2*s_lineheight+40), 4);
       graphics_fill_circle(ctx, GPoint(s_bounds_width-s_unit_field_width-(28*s_speed_decimal_colon)-5,s_top_margin+2*s_lineheight+25), 4);
+  }
+  // HR decimal dot
+  if (s_bpm_decimal_dot){
+      graphics_context_set_fill_color(ctx, HEART_COLOR);
+      graphics_fill_circle(ctx, GPoint(s_bounds_width-s_unit_field_width-(28*s_bpm_decimal_dot)-5,s_top_margin+3*s_lineheight+45), 4);
   }
   if (s_draw_bpm_dash){
       graphics_context_set_fill_color(ctx, HEART_COLOR);
