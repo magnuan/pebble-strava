@@ -708,8 +708,6 @@ static void prv_read_hr(void) {
 
 
 static void update_workout_display(void) {
-  s_speed_cms=345;
-  s_unit_system = UNIT_METRIC; 
   static ViewMode last_viewmode = VIEW_LAST;
   bool reciprocal_speed = ((s_sport != SPORT_CYCLING) && (s_unit_system != UNIT_SCIENTIFIC));
   const char* unit_ptr;
